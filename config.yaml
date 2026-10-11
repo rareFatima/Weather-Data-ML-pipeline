@@ -1,1 +1,19 @@
 # Configure locations, date range, and cloud storage bucket.
+stations:
+  - name: Riyadh
+    latitude: 24.6877
+    longitude: 46.7219
+
+start_date: "2025-10-30"
+end_date: "2026-09-28"
+
+hourly_variables:
+  - temperature_2m
+  - relative_humidity_2m
+  - surface_pressure
+  - wind_speed_10m
+  - rain
+
+timezone: "GMT"
+
+bucket_name: "riyadh-weather-ml-data"
