@@ -1,324 +1,116 @@
 import json
-import logging
-from io import BytesIO
-
+from pathlib import Path
 import pandas as pd
-import yaml
-from google.cloud import storage
 
+weather_columns = [
+    "temperature_2m",
+    "relative_humidity_2m",
+    "surface_pressure",
+    "wind_speed_10m",
+    "rain"
+]
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(levelname)s: %(message)s"
+with open("data/raw/riyadh_2025-10-30_2026-09-28.json") as file:
+    data = json.load(file)
+
+df = pd.DataFrame(data["hourly"])
+
+# 1. Check required columns
+required_columns = ["time"] + weather_columns
+missing_columns = [
+    column for column in required_columns
+    if column not in df.columns
+]
+if missing_columns:
+    raise ValueError(f"Missing columns: {missing_columns}")
+
+df = df[required_columns].copy()
+print("Rows loaded:", len(df))
+
+# 2. Confirm source timezone and parse timestamps
+if data.get("utc_offset_seconds") != 0:
+    raise ValueError("Source timezone needs review before using UTC")
+
+df["time"] = pd.to_datetime(
+    df["time"], utc=True, errors="coerce"
 )
 
+invalid_times = df["time"].isna().sum()
+print("Invalid timestamps:", invalid_times)
+if invalid_times > 0:
+    raise ValueError("Invalid timestamps found")
 
-REQUIRED_COLUMNS = [
-    "time",
-    "temperature_2m",
-    "relative_humidity_2m",
-    "surface_pressure",
-    "wind_speed_10m",
-    "rain",
-]
+# 3. Sort and check duplicates
+df = df.sort_values("time").reset_index(drop=True)
 
-WEATHER_COLUMNS = [
-    "temperature_2m",
-    "relative_humidity_2m",
-    "surface_pressure",
-    "wind_speed_10m",
-    "rain",
-]
+duplicates = df["time"].duplicated().sum()
+print("Duplicate timestamps:", duplicates)
+if duplicates > 0:
+    raise ValueError("Duplicate timestamps found")
 
+# 4. Check hourly continuity
+if df.empty:
+    raise ValueError("Dataset is empty")
 
-def load_config():
-    with open("config.yaml", "r") as file:
-        return yaml.safe_load(file)
+expected_times = pd.date_range(
+    start=df["time"].min(),
+    end=df["time"].max(),
+    freq="h"
+)
 
+actual_times = pd.DatetimeIndex(df["time"])
+missing_hours = len(expected_times.difference(actual_times))
+off_grid_times = len(actual_times.difference(expected_times))
 
-def load_raw_data(bucket_name):
-    client = storage.Client()
-    bucket = client.bucket(bucket_name)
+print("Missing hours:", missing_hours)
+print("Off-grid timestamps:", off_grid_times)
 
-    # Read only the 2160-row dataset
-    blob = bucket.blob(
-        "raw/riyadh_2026-07-01_2026-09-28.json"
+if missing_hours > 0 or off_grid_times > 0:
+    raise ValueError("Hourly continuity needs review")
+
+# 5. Convert weather values to numbers and check missing values
+for column in weather_columns:
+    df[column] = pd.to_numeric(df[column], errors="coerce")
+
+print("Missing or non-numeric values:")
+print(df[weather_columns].isna().sum())
+
+if df[weather_columns].isna().any().any():
+    raise ValueError("Missing or non-numeric values found")
+
+# 6. Check plausible ranges
+invalid_values = pd.DataFrame({
+    "temperature_2m": ~df["temperature_2m"].between(-90, 60),
+    "relative_humidity_2m": ~df["relative_humidity_2m"].between(0, 100),
+    "surface_pressure": df["surface_pressure"] <= 0,
+    "wind_speed_10m": df["wind_speed_10m"] < 0,
+    "rain": df["rain"] < 0
+})
+
+# Also reject infinity
+for column in weather_columns:
+    invalid_values[column] = (
+        invalid_values[column]
+        | df[column].isin([float("inf"), float("-inf")])
     )
 
-    logging.info(f"Reading {blob.name}")
-
-    raw_data = json.loads(blob.download_as_text())
-
-    if "hourly" not in raw_data:
-        raise ValueError("'hourly' not found in raw data")
-
-    return pd.DataFrame(raw_data["hourly"])
-
-
-def interpolate_short_gaps(df, columns):
-    """
-    Interpolate only complete gaps of 1 or 2 hours.
-    Gaps longer than 2 hours remain missing and will be dropped.
-    """
-
-    interpolated_rows = set()
-
-    for column in columns:
-        missing = df[column].isna()
-
-        # Give each consecutive missing/non-missing block an ID
-        groups = missing.ne(missing.shift()).cumsum()
-
-        for _, indexes in df[missing].groupby(groups[missing]).groups.items():
-            indexes = list(indexes)
-
-            # Only interpolate gaps of 1 or 2 rows
-            if len(indexes) <= 2:
-                start = indexes[0]
-                end = indexes[-1]
-
-                # Need a valid value before and after the gap
-                if (
-                    start > 0
-                    and end < len(df) - 1
-                    and pd.notna(df.loc[start - 1, column])
-                    and pd.notna(df.loc[end + 1, column])
-                ):
-                    values = df.loc[
-                        start - 1:end + 1, column
-                    ].interpolate(method="linear")
-
-                    df.loc[start:end, column] = values.loc[start:end]
-
-                    interpolated_rows.update(indexes)
-
-    return df, len(interpolated_rows)
-
-
-def clean_data(df):
-    # Add station
-    df["station"] = "riyadh"
-
-    # 1. Validate required columns
-    missing_columns = [
-        column
-        for column in REQUIRED_COLUMNS
-        if column not in df.columns
-    ]
-
-    if missing_columns:
-        raise ValueError(
-            f"Missing required columns: {missing_columns}"
-        )
-
-    # 2. Standardize timestamp to UTC
-    df["timestamp_utc"] = pd.to_datetime(
-        df["time"],
-        utc=True,
-        errors="coerce"
-    )
-
-    invalid_timestamps = df["timestamp_utc"].isna().sum()
-
-    logging.info(
-        f"Invalid timestamps: {invalid_timestamps}"
-    )
-
-    # Remove rows with invalid timestamps
-    df = df.dropna(
-        subset=["timestamp_utc"]
-    )
-
-    # Remove original time column
-    df = df.drop(
-        columns=["time"]
-    )
-
-    # 3. Sort chronologically
-    df = df.sort_values(
-        ["station", "timestamp_utc"]
-    ).reset_index(drop=True)
-
-    # 4. Remove duplicates
-    before_duplicates = len(df)
-
-    df = df.drop_duplicates(
-        subset=["station", "timestamp_utc"]
-    )
-
-    duplicates_removed = (
-        before_duplicates - len(df)
-    )
-
-    logging.info(
-        f"Duplicates removed: {duplicates_removed}"
-    )
-
-    # Sort again after duplicate removal
-    df = df.sort_values(
-        ["station", "timestamp_utc"]
-    ).reset_index(drop=True)
-
-    # 5. Check hourly continuity
-    df = df.set_index("timestamp_utc")
-
-    full_range = pd.date_range(
-        start=df.index.min(),
-        end=df.index.max(),
-        freq="h",
-        tz="UTC"
-    )
-
-    missing_hours = len(
-        full_range.difference(df.index)
-    )
-
-    logging.info(
-        f"Missing hourly timestamps found: {missing_hours}"
-    )
-
-    # Create rows for completely missing hours
-    df = df.reindex(full_range)
-
-    df.index.name = "timestamp_utc"
-
-    # We only have Riyadh in this dataset
-    df["station"] = "riyadh"
-
-    df = df.reset_index()
-
-    # 6. Validate plausible value ranges
-    invalid_values = (
-        (
-            df["relative_humidity_2m"].notna()
-            & ~df["relative_humidity_2m"].between(0, 100)
-        )
-        |
-        (
-            df["wind_speed_10m"].notna()
-            & (df["wind_speed_10m"] < 0)
-        )
-        |
-        (
-            df["rain"].notna()
-            & (df["rain"] < 0)
-        )
-        |
-        (
-            df["surface_pressure"].notna()
-            & (df["surface_pressure"] <= 0)
-        )
-        |
-        (
-            df["temperature_2m"].notna()
-            & ~df["temperature_2m"].between(-90, 60)
-        )
-    )
-
-    invalid_rows = invalid_values.sum()
-
-    logging.info(
-        f"Rows with invalid values: {invalid_rows}"
-    )
-
-    # Turn invalid weather values into missing values
-    # so they go through the same missing-value policy.
-    df.loc[
-        invalid_values,
-        WEATHER_COLUMNS
-    ] = pd.NA
-
-    # 7. Handle missing values
-    df, interpolated_rows = interpolate_short_gaps(
-        df,
-        WEATHER_COLUMNS
-    )
-
-    logging.info(
-        f"Rows interpolated: {interpolated_rows}"
-    )
-
-    # Anything still missing belongs to a longer gap
-    # or cannot safely be interpolated.
-    before_drop = len(df)
-
-    df = df.dropna(
-        subset=WEATHER_COLUMNS
-    )
-
-    dropped_rows = (
-        before_drop - len(df)
-    )
-
-    logging.info(
-        f"Rows dropped after missing-value handling: {dropped_rows}"
-    )
-
-    # 8. Final sorting
-    df = df.sort_values(
-        ["station", "timestamp_utc"]
-    ).reset_index(drop=True)
-
-    return df
-
-
-def save_processed_data(df, bucket_name):
-    buffer = BytesIO()
-
-    df.to_parquet(
-        buffer,
-        index=False,
-        engine="pyarrow"
-    )
-
-    buffer.seek(0)
-
-    client = storage.Client()
-    bucket = client.bucket(bucket_name)
-
-    blob = bucket.blob(
-        "processed/weather_clean.parquet"
-    )
-
-    blob.upload_from_file(
-        buffer,
-        content_type="application/octet-stream"
-    )
-
-    logging.info(
-        "Saved processed/weather_clean.parquet to the bucket"
-    )
-
-
-def main():
-    config = load_config()
-
-    bucket_name = config["bucket_name"]
-
-    # Load raw data
-    df = load_raw_data(bucket_name)
-
-    logging.info(
-        f"Rows loaded: {len(df)}"
-    )
-
-    # Clean and validate data
-    clean_df = clean_data(df)
-
-    logging.info(
-        f"Final clean rows: {len(clean_df)}"
-    )
-
-    # Preview cleaned data
-    print(clean_df.head())
-    print(clean_df.tail())
-
-    # Save clean Parquet to Google Cloud
-    save_processed_data(
-        clean_df,
-        bucket_name
-    )
-
-
-if __name__ == "__main__":
-    main()
+print("Invalid values per column:")
+print(invalid_values.sum())
+
+if invalid_values.any().any():
+    raise ValueError("Invalid weather values found")
+
+# 7. Save only after all checks pass
+Path("data/processed").mkdir(parents=True, exist_ok=True)
+df.to_csv("data/processed/riyadh_8016.csv", index=False)
+
+print("Validation passed")
+print("Final rows:", len(df))
+print("Saved: data/processed/riyadh_8016.csv")
+
+df.to_parquet(
+    "data/processed/riyadh_8016.parquet",
+    index=False,
+    engine="pyarrow"
+)
+print("Saved: data/processed/riyadh_8016.parquet")
