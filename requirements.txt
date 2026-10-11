@@ -1,0 +1,7 @@
+requests
+pandas
+pyarrow
+scikit-learn
+google-cloud-storage
+matplotlib
+PyYAML
