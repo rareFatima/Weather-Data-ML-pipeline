@@ -6,7 +6,7 @@ from pathlib import Path
 
 # Read the cleaned dataset
 input_path = Path("data/processed/riyadh_8016.parquet")
-output_path = Path("data/processed/riyadh_8016_features.parquet")
+output_path = Path("data/features/riyadh_8016_features.parquet")
 
 df = pd.read_parquet(input_path)
 
