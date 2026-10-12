@@ -4,10 +4,7 @@ import pandas as pd
 from chronos import Chronos2Pipeline
 
 
-# --------------------------------------------------
 # 1. Load cleaned data
-# --------------------------------------------------
-
 df = pd.read_parquet(
     "data/processed/weather_clean.parquet"
 )
@@ -32,10 +29,8 @@ df = df.sort_values(
 ).reset_index(drop=True)
 
 
-# --------------------------------------------------
-# 2. Select required columns
-# --------------------------------------------------
 
+# 2. Select required columns
 columns = [
     "time",
     "temperature_2m",
@@ -51,10 +46,9 @@ df = df[columns].copy()
 df["item_id"] = "riyadh"
 
 
-# --------------------------------------------------
+
 # 3. Chronological holdout
 # Last 168 hours = 7 days
-# --------------------------------------------------
 
 context = df.iloc[:-168].copy()
 test = df.iloc[-168:].copy()
@@ -68,9 +62,7 @@ print("Test ends:", test["time"].max())
 print("Time dtype:", df["time"].dtype)
 
 
-# --------------------------------------------------
 # 4. Load pretrained Chronos-2 model
-# --------------------------------------------------
 
 print("Loading model...")
 
@@ -80,9 +72,7 @@ pipeline = Chronos2Pipeline.from_pretrained(
 )
 
 
-# --------------------------------------------------
 # 5. Generate predictions
-# --------------------------------------------------
 
 print("Generating predictions...")
 
@@ -98,9 +88,7 @@ predictions = pipeline.predict_df(
 )
 
 
-# --------------------------------------------------
 # 6. Save predictions
-# --------------------------------------------------
 
 Path(
     "data/predictions"
@@ -120,9 +108,8 @@ test.to_csv(
 )
 
 
-# --------------------------------------------------
+
 # 7. Preview results
-# --------------------------------------------------
 
 print(predictions.head())
 
