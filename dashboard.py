@@ -7,7 +7,7 @@ import streamlit as st
 
 
 # ==========================================
-# PAGE CONFIGURATION
+# 1. PAGE CONFIGURATION
 # ==========================================
 
 st.set_page_config(
@@ -19,7 +19,7 @@ st.set_page_config(
 
 
 # ==========================================
-# CUSTOM DESIGN
+# 2. CUSTOM DESIGN
 # ==========================================
 
 st.markdown("""
@@ -69,10 +69,6 @@ st.markdown("""
         font-weight: 800;
     }
 
-    div[data-testid="stVerticalBlockBorderWrapper"] {
-        border-radius: 18px;
-    }
-
     .section-title {
         font-size: 23px;
         font-weight: 750;
@@ -98,15 +94,20 @@ st.markdown("""
 
 
 # ==========================================
-# DATA CONFIGURATION
+# 3. DATA CONFIGURATION
 # ==========================================
 
-DATA_DIR = Path("data/dashboard")
+# Updated experiment with feature engineering
+DATA_DIR = Path("data/dashboard/features")
 
 PREDICTIONS_FILE = DATA_DIR / "chronos_8016.csv"
 ACTUAL_FILE = DATA_DIR / "actual_8016.csv"
 METRICS_FILE = DATA_DIR / "metrics_8016.csv"
 
+
+# ==========================================
+# 4. LOAD DATA
+# ==========================================
 
 @st.cache_data
 def load_data(pred_path, actual_path, metrics_path):
@@ -116,11 +117,13 @@ def load_data(pred_path, actual_path, metrics_path):
     metrics = pd.read_csv(metrics_path)
 
     predictions["time"] = pd.to_datetime(
-        predictions["time"], utc=True
+        predictions["time"],
+        utc=True
     )
 
     actual["time"] = pd.to_datetime(
-        actual["time"], utc=True
+        actual["time"],
+        utc=True
     )
 
     return predictions, actual, metrics
@@ -139,38 +142,36 @@ except Exception as error:
 
 
 # ==========================================
-# PREPARE DATA
+# 5. PREPARE TARGET DATA
 # ==========================================
 
 def prepare_target_data(target):
 
-    pred = predictions[
+    target_predictions = predictions[
         predictions["target_name"] == target
     ][["item_id", "time", "predictions"]].copy()
 
-    pred = pred.rename(
+    target_predictions = target_predictions.rename(
         columns={"predictions": "predicted"}
     )
 
-    real = actual[
+    target_actual = actual[
         ["item_id", "time", target]
     ].copy()
 
-    real = real.rename(
+    target_actual = target_actual.rename(
         columns={target: "actual"}
     )
 
     merged = pd.merge(
-        pred,
-        real,
+        target_predictions,
+        target_actual,
         on=["item_id", "time"],
         how="inner",
         validate="one_to_one"
     )
 
-    merged = merged.sort_values("time")
-
-    return merged
+    return merged.sort_values("time").reset_index(drop=True)
 
 
 temperature = prepare_target_data("temperature_2m")
@@ -178,53 +179,19 @@ rain = prepare_target_data("rain")
 
 
 # ==========================================
-# CALCULATE PERCENTAGE METRICS
-# ==========================================
-
-def calculate_mape(data):
-
-    valid = data[
-        (data["actual"].notna())
-        & (data["predicted"].notna())
-        & (data["actual"] != 0)
-    ]
-
-    if valid.empty:
-        return None
-
-    percentage_error = (
-        np.abs(
-            (valid["actual"] - valid["predicted"])
-            / valid["actual"]
-        ) * 100
-    )
-
-    return float(percentage_error.mean())
-
-
-temperature_mape = calculate_mape(temperature)
-
-temperature_performance = (
-    max(0.0, 100.0 - temperature_mape)
-    if temperature_mape is not None
-    else None
-)
-
-
-# ==========================================
-# METRICS HELPERS
+# 6. GET EVALUATION METRICS
 # ==========================================
 
 def get_metrics(target):
 
-    row = metrics[
+    target_metrics = metrics[
         metrics["target"] == target
     ]
 
-    if row.empty:
+    if target_metrics.empty:
         return None
 
-    return row.iloc[0]
+    return target_metrics.iloc[0]
 
 
 temp_metrics = get_metrics("temperature_2m")
@@ -232,33 +199,33 @@ rain_metrics = get_metrics("rain")
 
 
 # ==========================================
-# HEADER
+# 7. HEADER
 # ==========================================
 
-st.markdown(
-    "# 🌤️ Riyadh Weather Analytics"
-)
+st.title("🌤️ Riyadh Weather Analytics")
 
 st.markdown(
     '<div class="subtitle">'
     'Machine Learning Weather Forecasting • '
-    'Amazon Chronos-2 • Experiment 8016'
+    'Amazon Chronos-2 • Experiment 8016 with Features'
     '</div>',
     unsafe_allow_html=True
 )
 
 st.info(
-    "Experiment 8016 | 168-hour forecast | "
-    "Results before the new feature engineering inputs."
+    "Experiment 8016 with Feature Engineering | "
+    "168-Hour Weather Forecast | Riyadh"
 )
 
 
 # ==========================================
-# SUMMARY CARDS
+# 8. FORECAST OVERVIEW
 # ==========================================
 
 st.markdown(
-    '<div class="section-title">📊 Forecast Overview</div>',
+    '<div class="section-title">'
+    '📊 Forecast Overview'
+    '</div>',
     unsafe_allow_html=True
 )
 
@@ -285,20 +252,14 @@ with col3:
 
 with col4:
     st.metric(
-        "🎯 Temperature Performance",
-        f"{temperature_performance:.2f}%"
-        if temperature_performance is not None
-        else "N/A",
-        help=(
-            "Calculated as 100 - MAPE. "
-            "This is an illustrative performance indicator, "
-            "not classification accuracy."
-        )
+        "🎯 Temperature RMSE",
+        f"{temp_metrics['RMSE']:.3f} °C"
+        if temp_metrics is not None else "N/A"
     )
 
 
 # ==========================================
-# CHART FUNCTION
+# 9. CHART FUNCTION
 # ==========================================
 
 def create_chart(data, title, unit, color):
@@ -375,7 +336,7 @@ def create_chart(data, title, unit, color):
 
 
 # ==========================================
-# TEMPERATURE SECTION
+# 10. TEMPERATURE SECTION
 # ==========================================
 
 st.markdown(
@@ -394,7 +355,7 @@ with st.container(border=True):
             "Temperature (°C)",
             "#2563EB"
         ),
-        use_container_width=True
+        width="stretch"
     )
 
     c1, c2, c3 = st.columns(3)
@@ -415,20 +376,19 @@ with st.container(border=True):
 
     with c3:
         st.metric(
-            "MAPE",
-            f"{temperature_mape:.2f}%"
-            if temperature_mape is not None else "N/A"
+            "Test Hours",
+            f"{int(temp_metrics['hours'])}"
+            if temp_metrics is not None else "N/A"
         )
 
     st.caption(
-        "MAE and RMSE are taken from the evaluation results. "
-        "MAPE is calculated from the matched actual "
-        "and predicted temperature values."
+        "MAE and RMSE are calculated from the "
+        "feature-engineered model predictions."
     )
 
 
 # ==========================================
-# RAINFALL SECTION
+# 11. RAINFALL SECTION
 # ==========================================
 
 st.markdown(
@@ -447,7 +407,7 @@ with st.container(border=True):
             "Rainfall (mm)",
             "#0891B2"
         ),
-        use_container_width=True
+        width="stretch"
     )
 
     c1, c2, c3 = st.columns(3)
@@ -469,18 +429,22 @@ with st.container(border=True):
     with c3:
         st.metric(
             "Rainy Hours",
-            "0 / 168"
+            (
+                f"{int(rain_metrics['nonzero_actual_hours'])}"
+                f" / {int(rain_metrics['hours'])}"
+            )
+            if rain_metrics is not None else "N/A"
         )
 
     st.warning(
-        "No rainfall occurred during the test period. "
-        "Rainfall prediction accuracy cannot be "
-        "reliably evaluated using this period alone."
+        "No rainfall occurred during the 168-hour test period. "
+        "Rainfall prediction performance cannot be fully "
+        "evaluated using this period alone."
     )
 
 
 # ==========================================
-# EVALUATION SUMMARY
+# 12. EVALUATION SUMMARY
 # ==========================================
 
 st.markdown(
@@ -515,12 +479,12 @@ st.dataframe(
         ]
     ],
     hide_index=True,
-    use_container_width=True
+    width="stretch"
 )
 
 
 # ==========================================
-# FOOTER
+# 13. FOOTER
 # ==========================================
 
 st.divider()
@@ -530,7 +494,7 @@ st.markdown(
     'Open-Meteo Weather Data | '
     'Google Cloud Storage | '
     'Amazon Chronos-2 | '
-    'Experiment 8016'
+    'Experiment 8016 with Features'
     '</div>',
     unsafe_allow_html=True
 )
