@@ -37,6 +37,7 @@ df["hour_sin"] = np.sin(2 * np.pi * hour / 24)
 df["hour_cos"] = np.cos(2 * np.pi * hour / 24)
 
 # Save to a new file; keep the clean source unchanged
+output_path.parent.mkdir(parents=True, exist_ok=True)
 df.to_parquet(output_path, index=False)
 
 print("Output file:", output_path)

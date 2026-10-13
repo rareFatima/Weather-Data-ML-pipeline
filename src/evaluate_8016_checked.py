@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-PREDICTIONS_DIR = Path("data/predictions")
+PREDICTIONS_DIR = Path("data/predictions/experiment-8016-features")
 
 
 def main():
