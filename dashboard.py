@@ -1,9 +1,10 @@
-from pathlib import Path
+from io import BytesIO
 
-import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+
+from google.cloud import storage
 
 
 # ==========================================
@@ -69,6 +70,10 @@ st.markdown("""
         font-weight: 800;
     }
 
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        border-radius: 18px;
+    }
+
     .section-title {
         font-size: 23px;
         font-weight: 750;
@@ -94,27 +99,56 @@ st.markdown("""
 
 
 # ==========================================
-# 3. DATA CONFIGURATION
+# 3. GOOGLE CLOUD CONFIGURATION
 # ==========================================
 
-# Updated experiment with feature engineering
-DATA_DIR = Path("data/dashboard/features")
+BUCKET_NAME = "riyadh-weather-ml-data"
 
-PREDICTIONS_FILE = DATA_DIR / "chronos_8016.csv"
-ACTUAL_FILE = DATA_DIR / "actual_8016.csv"
-METRICS_FILE = DATA_DIR / "metrics_8016.csv"
+# Change this path when switching experiments
+EXPERIMENT_PATH = "predictions/experiment-8016-features"
+
+PREDICTIONS_FILE = (
+    f"{EXPERIMENT_PATH}/chronos_8016.csv"
+)
+
+ACTUAL_FILE = (
+    f"{EXPERIMENT_PATH}/actual_8016.csv"
+)
+
+METRICS_FILE = (
+    f"{EXPERIMENT_PATH}/metrics_8016.csv"
+)
 
 
 # ==========================================
-# 4. LOAD DATA
+# 4. LOAD DATA FROM GOOGLE CLOUD
 # ==========================================
 
-@st.cache_data
-def load_data(pred_path, actual_path, metrics_path):
+@st.cache_data(ttl=300)
+def load_data(
+    bucket_name,
+    pred_path,
+    actual_path,
+    metrics_path
+):
 
-    predictions = pd.read_csv(pred_path)
-    actual = pd.read_csv(actual_path)
-    metrics = pd.read_csv(metrics_path)
+    client = storage.Client()
+
+    bucket = client.bucket(bucket_name)
+
+    def read_csv(blob_path):
+
+        blob = bucket.blob(blob_path)
+
+        content = blob.download_as_bytes()
+
+        return pd.read_csv(BytesIO(content))
+
+    predictions = read_csv(pred_path)
+
+    actual = read_csv(actual_path)
+
+    metrics = read_csv(metrics_path)
 
     predictions["time"] = pd.to_datetime(
         predictions["time"],
@@ -130,14 +164,22 @@ def load_data(pred_path, actual_path, metrics_path):
 
 
 try:
+
     predictions, actual, metrics = load_data(
-        str(PREDICTIONS_FILE),
-        str(ACTUAL_FILE),
-        str(METRICS_FILE)
+        BUCKET_NAME,
+        PREDICTIONS_FILE,
+        ACTUAL_FILE,
+        METRICS_FILE
     )
 
 except Exception as error:
-    st.error(f"Unable to load dashboard data: {error}")
+
+    st.error(
+        "Unable to load data from Google Cloud Storage."
+    )
+
+    st.exception(error)
+
     st.stop()
 
 
@@ -149,33 +191,59 @@ def prepare_target_data(target):
 
     target_predictions = predictions[
         predictions["target_name"] == target
-    ][["item_id", "time", "predictions"]].copy()
+    ][
+        [
+            "item_id",
+            "time",
+            "predictions"
+        ]
+    ].copy()
 
     target_predictions = target_predictions.rename(
-        columns={"predictions": "predicted"}
+        columns={
+            "predictions": "predicted"
+        }
     )
 
     target_actual = actual[
-        ["item_id", "time", target]
+        [
+            "item_id",
+            "time",
+            target
+        ]
     ].copy()
 
     target_actual = target_actual.rename(
-        columns={target: "actual"}
+        columns={
+            target: "actual"
+        }
     )
 
     merged = pd.merge(
         target_predictions,
         target_actual,
-        on=["item_id", "time"],
+        on=[
+            "item_id",
+            "time"
+        ],
         how="inner",
         validate="one_to_one"
     )
 
-    return merged.sort_values("time").reset_index(drop=True)
+    merged = merged.sort_values(
+        "time"
+    ).reset_index(drop=True)
+
+    return merged
 
 
-temperature = prepare_target_data("temperature_2m")
-rain = prepare_target_data("rain")
+temperature = prepare_target_data(
+    "temperature_2m"
+)
+
+rain = prepare_target_data(
+    "rain"
+)
 
 
 # ==========================================
@@ -194,20 +262,28 @@ def get_metrics(target):
     return target_metrics.iloc[0]
 
 
-temp_metrics = get_metrics("temperature_2m")
-rain_metrics = get_metrics("rain")
+temp_metrics = get_metrics(
+    "temperature_2m"
+)
+
+rain_metrics = get_metrics(
+    "rain"
+)
 
 
 # ==========================================
 # 7. HEADER
 # ==========================================
 
-st.title("🌤️ Riyadh Weather Analytics")
+st.markdown(
+    "# 🌤️ Riyadh Weather Analytics"
+)
 
 st.markdown(
     '<div class="subtitle">'
     'Machine Learning Weather Forecasting • '
-    'Amazon Chronos-2 • Experiment 8016 with Features'
+    'Amazon Chronos-2 • '
+    'Experiment 8016 with Features'
     '</div>',
     unsafe_allow_html=True
 )
@@ -231,30 +307,44 @@ st.markdown(
 
 col1, col2, col3, col4 = st.columns(4)
 
+
 with col1:
+
     st.metric(
         "📍 Location",
         "Riyadh"
     )
 
+
 with col2:
+
     st.metric(
         "🕒 Test Period",
         "168 Hours"
     )
 
+
 with col3:
+
     st.metric(
         "🌡️ Temperature MAE",
-        f"{temp_metrics['MAE']:.3f} °C"
-        if temp_metrics is not None else "N/A"
+        (
+            f"{temp_metrics['MAE']:.3f} °C"
+            if temp_metrics is not None
+            else "N/A"
+        )
     )
 
+
 with col4:
+
     st.metric(
         "🎯 Temperature RMSE",
-        f"{temp_metrics['RMSE']:.3f} °C"
-        if temp_metrics is not None else "N/A"
+        (
+            f"{temp_metrics['RMSE']:.3f} °C"
+            if temp_metrics is not None
+            else "N/A"
+        )
     )
 
 
@@ -262,10 +352,16 @@ with col4:
 # 9. CHART FUNCTION
 # ==========================================
 
-def create_chart(data, title, unit, color):
+def create_chart(
+    data,
+    title,
+    unit,
+    color
+):
 
     fig = go.Figure()
 
+    # Actual values
     fig.add_trace(
         go.Scatter(
             x=data["time"],
@@ -279,6 +375,7 @@ def create_chart(data, title, unit, color):
         )
     )
 
+    # Predicted values
     fig.add_trace(
         go.Scatter(
             x=data["time"],
@@ -294,6 +391,7 @@ def create_chart(data, title, unit, color):
     )
 
     fig.update_layout(
+
         title=dict(
             text=title,
             font=dict(
@@ -301,29 +399,38 @@ def create_chart(data, title, unit, color):
                 color="#14213D"
             )
         ),
+
         height=420,
+
         paper_bgcolor="white",
+
         plot_bgcolor="white",
+
         font=dict(
             color="#475569"
         ),
+
         xaxis=dict(
             title="Time (UTC)",
             showgrid=True,
             gridcolor="#F1F5F9"
         ),
+
         yaxis=dict(
             title=unit,
             showgrid=True,
             gridcolor="#E2E8F0",
             zeroline=False
         ),
+
         legend=dict(
             orientation="h",
             y=1.12,
             x=0
         ),
+
         hovermode="x unified",
+
         margin=dict(
             l=35,
             r=25,
@@ -361,29 +468,41 @@ with st.container(border=True):
     c1, c2, c3 = st.columns(3)
 
     with c1:
+
         st.metric(
             "MAE",
-            f"{temp_metrics['MAE']:.3f} °C"
-            if temp_metrics is not None else "N/A"
+            (
+                f"{temp_metrics['MAE']:.3f} °C"
+                if temp_metrics is not None
+                else "N/A"
+            )
         )
 
     with c2:
+
         st.metric(
             "RMSE",
-            f"{temp_metrics['RMSE']:.3f} °C"
-            if temp_metrics is not None else "N/A"
+            (
+                f"{temp_metrics['RMSE']:.3f} °C"
+                if temp_metrics is not None
+                else "N/A"
+            )
         )
 
     with c3:
+
         st.metric(
             "Test Hours",
-            f"{int(temp_metrics['hours'])}"
-            if temp_metrics is not None else "N/A"
+            (
+                str(int(temp_metrics["hours"]))
+                if temp_metrics is not None
+                else "N/A"
+            )
         )
 
     st.caption(
-        "MAE and RMSE are calculated from the "
-        "feature-engineered model predictions."
+        "MAE and RMSE are taken from the "
+        "feature-engineered model evaluation results."
     )
 
 
@@ -413,34 +532,49 @@ with st.container(border=True):
     c1, c2, c3 = st.columns(3)
 
     with c1:
+
         st.metric(
             "MAE",
-            f"{rain_metrics['MAE']:.3f} mm"
-            if rain_metrics is not None else "N/A"
+            (
+                f"{rain_metrics['MAE']:.3f} mm"
+                if rain_metrics is not None
+                else "N/A"
+            )
         )
 
     with c2:
+
         st.metric(
             "RMSE",
-            f"{rain_metrics['RMSE']:.3f} mm"
-            if rain_metrics is not None else "N/A"
+            (
+                f"{rain_metrics['RMSE']:.3f} mm"
+                if rain_metrics is not None
+                else "N/A"
+            )
         )
 
     with c3:
+
+        rainy_hours = (
+            int(rain_metrics["nonzero_actual_hours"])
+            if rain_metrics is not None
+            else None
+        )
+
+        total_hours = (
+            int(rain_metrics["hours"])
+            if rain_metrics is not None
+            else None
+        )
+
         st.metric(
             "Rainy Hours",
             (
-                f"{int(rain_metrics['nonzero_actual_hours'])}"
-                f" / {int(rain_metrics['hours'])}"
+                f"{rainy_hours} / {total_hours}"
+                if rainy_hours is not None
+                else "N/A"
             )
-            if rain_metrics is not None else "N/A"
         )
-
-    st.warning(
-        "No rainfall occurred during the 168-hour test period. "
-        "Rainfall prediction performance cannot be fully "
-        "evaluated using this period alone."
-    )
 
 
 # ==========================================
@@ -456,7 +590,9 @@ st.markdown(
 
 summary = metrics.copy()
 
-summary["Target"] = summary["target"].replace({
+summary["Target"] = summary[
+    "target"
+].replace({
     "temperature_2m": "Temperature",
     "rain": "Rainfall"
 })
@@ -464,7 +600,8 @@ summary["Target"] = summary["target"].replace({
 summary = summary.rename(
     columns={
         "hours": "Test Hours",
-        "nonzero_actual_hours": "Nonzero Actual Hours"
+        "nonzero_actual_hours":
+            "Nonzero Actual Hours"
     }
 )
 
