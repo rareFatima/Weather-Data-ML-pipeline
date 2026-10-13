@@ -1,7 +1,12 @@
 requests
 pandas
+numpy
 pyarrow
 scikit-learn
 google-cloud-storage
 matplotlib
 PyYAML
+torch
+chronos-forecasting>=2.0,<3.0
+plotly
+streamlit
