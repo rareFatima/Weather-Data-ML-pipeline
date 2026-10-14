@@ -45,7 +45,7 @@ Run these commands from the project directory:
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+python -m pip install --no-cache-dir torch==2.14.1+cpu --index-url https://download.pytorch.org/whl/cpu
 python -m pip install -r requirements.txt
 ```
 
