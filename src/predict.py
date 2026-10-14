@@ -9,7 +9,6 @@ OUTPUT_DIR = Path("data/predictions/experiment-8016-features")
 
 
 def to_naive_time(df):
-    """Store time as plain UTC datetime without the timezone label."""
     df = df.copy()
     df["time"] = (
         pd.to_datetime(df["time"], utc=True)
