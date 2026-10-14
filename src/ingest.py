@@ -1,11 +1,60 @@
 # Fetch weather data and store the original JSON response.
+import logging
+import time
 from pathlib import Path
-from google.cloud import storage
+
 import requests
 import yaml
+from google.cloud import storage
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s: %(message)s"
+)
+
+
+def fetch_weather(url, params):
+    max_attempts = 3
+
+    for attempt in range(1, max_attempts + 1):
+        logging.info("API request: attempt %s/%s", attempt, max_attempts)
+
+        try:
+            response = requests.get(url, params=params, timeout=60)
+            response.raise_for_status()
+            return response
+
+        except requests.HTTPError as error:
+            status = error.response.status_code
+
+            # Retry temporary server errors and rate limits.
+            if status != 429 and not 500 <= status < 600:
+                logging.error("API rejected the request: %s", error)
+                raise
+
+            if attempt == max_attempts:
+                logging.error("API request failed after all attempts")
+                raise
+
+            logging.warning("Temporary API error: HTTP %s", status)
+
+        except (requests.Timeout, requests.ConnectionError) as error:
+            if attempt == max_attempts:
+                logging.error("API request failed after all attempts: %s", error)
+                raise
+
+            logging.warning("Temporary connection problem: %s", error)
+
+        # Wait 2 seconds, then 4 seconds before retrying.
+        wait_seconds = 2 ** attempt
+        logging.info("Retrying in %s seconds", wait_seconds)
+        time.sleep(wait_seconds)
 
 
 def ingest():
+    logging.info("Ingestion started")
+
     project_folder = Path(__file__).resolve().parent.parent
     config_path = project_folder / "config.yaml"
 
@@ -30,18 +79,19 @@ def ingest():
             "timezone": config["timezone"],
         }
 
-        print("Location:", station["name"])
-        print("Date range:", config["start_date"], "to", config["end_date"])
+        logging.info("Location: %s", station["name"])
+        logging.info(
+            "Date range: %s to %s",
+            config["start_date"],
+            config["end_date"]
+        )
 
-        try:
-            response = requests.get(url, params=params, timeout=60)
-            response.raise_for_status()
-        except requests.Timeout:
-            print("Request timed out.")
-            raise
-        except requests.RequestException as error:
-            print("Request failed:", error)
-            raise
+        response = fetch_weather(url, params)
+
+        # Check the response before saving its original bytes.
+        data = response.json()
+        rows = len(data["hourly"]["time"])
+        logging.info("Hourly rows received: %s", rows)
 
         city = station["name"].lower()
         start_date = config["start_date"]
@@ -53,7 +103,7 @@ def ingest():
         with open(file_path, "wb") as file:
             file.write(response.content)
 
-        print("Data saved:", file_path)
+        logging.info("Data saved: %s", file_path)
 
         blob = bucket.blob(f"raw/{filename}")
         blob.upload_from_filename(
@@ -61,7 +111,13 @@ def ingest():
             content_type="application/json"
         )
 
-        print("Uploaded:", f"gs://{config['bucket_name']}/raw/{filename}")
+        logging.info(
+            "Uploaded: gs://%s/raw/%s",
+            config["bucket_name"],
+            filename
+        )
+
+    logging.info("Ingestion completed")
 
 
 if __name__ == "__main__":
