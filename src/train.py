@@ -29,8 +29,8 @@ FEATURE_COLUMNS = [
 def prepare_inputs():
     # Read the dataset prepared by features.py
     df = pd.read_parquet(
-        "data/processed/riyadh_8016_features.parquet"
-    )
+    "data/features/riyadh_8016_features.parquet"
+)
 
     required_columns = (
         ["station", "timestamp_utc"]
