@@ -1,13 +1,3 @@
-"""
-Evaluate Chronos-2 predictions for experiment 8016.
-
-Compares the predicted value with the actual value for the same hour,
-separately for each target (temperature_2m, rain), and reports MAE and RMSE.
-
-Run from the project folder:
-    python src/evaluate_8016.py
-"""
-
 from pathlib import Path
 
 import numpy as np
