@@ -32,6 +32,21 @@ st.title("Riyadh Weather Dashboard")
 st.write("Dataset: 8,016 hourly records")
 st.write("Test period: September 22–28, 2026")
 st.write("Forecast length: 168 hours")
+st.header("Clean Data Overview")
+
+bucket = storage.Client().bucket("riyadh-weather-ml-data")
+blob = bucket.blob(
+    "processed/experiment-8016/weather_clean.parquet"
+)
+
+clean_data = pd.read_parquet(BytesIO(blob.download_as_bytes()))
+
+st.write("Location: Riyadh")
+st.write("Total records:", len(clean_data))
+st.write("Start:", str(clean_data["timestamp_utc"].min()))
+st.write("End:", str(clean_data["timestamp_utc"].max()))
+
+st.dataframe(clean_data.head(), hide_index=True)
 
 try:
     predictions, actual, metrics = load_data()
